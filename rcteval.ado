@@ -18,7 +18,8 @@ TODO:
 
 syntax varlist(min=2 max=2 numeric) [if] [in] [, COVARS(varlist fv) SUBGroups(varlist) REView(varlist) BALanceby(varlist) SKIPBALance /* CONtrol(integer) */ MODel(string) CLuster(varlist)]
 
-qui: marksample touse // Exclude observations that do not meet the IF or IN criteria (if specified).
+* Exclude observations that do not meet the IF or IN criteria (if specified).
+qui: marksample touse
 
 tokenize `varlist'
 local dv `1'
