@@ -79,14 +79,51 @@ logit `dv' ib`control'.`assignment' `covars' if `touse', nolog or cluster(`clust
 * dis "Marginal effects:"
 * prchange `assignment', rest(mean) brief fromto
 
-dis _n(3) "e. Subgroup analysis -- (`subgroups')"
+
+
+*******
+* Pre-process subgroups en masse and remove from current analysis if they don't have two or more levels in this sample.
+**
+local subgroups_clean ""
+local subgroups_skip ""
 foreach var in `subgroups' {
 	* Confirm that there are at least two levels of this subgroup.
 	qui tab `var' if `touse'
 	if r(r) < 2 {
+		* Skip this subgroup.
+		local blank " "
+		* Don't add a space if this is the first skipped subgroup.
+		if "`subgroups_skip'" == "" {
+			local blank = ""
+		}
+		local subgroups_skip "`subgroups_skip'`blank'`var'"	
+	}
+	else {
+		* Keep this subgroup.
+		local blank " "
+		* Don't add a space if this is the first clean subgroup.
+		if "`subgroups_clean'" == "" {
+			local blank = ""
+		}
+		local subgroups_clean "`subgroups_clean'`blank'`var'"
+	}
+}
+
+dis _n(3) "e. Subgroup analysis (`subgroups_clean')"
+dis "Subgroups skipped: `subgroups_skip'."
+
+
+
+foreach var in `subgroups_clean' {
+	* Confirm that there are at least two levels of this subgroup.
+	qui tab `var' if `touse'
+	* Save the number of levels for future usage.
+	local group_levels = r(r)
+	if r(r) < 2 {
 		dis "Skipping subgroup `var' because it does not have 2 or more levels."
 		continue
 	}
+
 	/** Skip this part to keep the log concise.
 	dis _n "Interaction test for `var', no covariates -- "
 	logit `dv' `var'##i.`assignment' if `touse', nolog or cluster(`cluster')
@@ -97,6 +134,10 @@ foreach var in `subgroups' {
 	
 	dis _n(3) "Interaction test for `var', with covariates -- "
     logit `dv' `var'##ib`control'.`assignment' `covars' if `touse', nolog or cluster(`cluster')
+    
+    * TODO: Only run contrast command if variable has more than two levels.
+    * Otherwise, just look at the p-value in the regression.
+    
     * estimates store model_interact
     * We allow the distribution of interaction term values to be left as observed in the dataset rather than assumed to be equal (as balanced).
 	contrast `var'##i.`assignment', asobserved
