@@ -4,7 +4,10 @@ version 12.0
 
 /*
 * Example syntax: 
-rcteval `dv' `assignment', covars(`covars') subgroups(`subgroups') review(`assignment_review') balanceby(`balance_var')
+rcteval `dv' `assignment', covars(`covars') subgroups(`subgroups') bins(`subgroups') review(`assignment_review') balanceby(`balance_var')
+
+tiles: ordinal categorical variables that should be converted to tiles, then have a specific HTE algorithm used.
+  - Try a 5-tile first at joint p < 0.1 or any individual p < 0.1, then if any is significant run 3-tile and 7-tile for comparison.
 
 
 TODO:
@@ -16,7 +19,7 @@ TODO:
 
 */
 
-syntax varlist(min=2 max=2 numeric) [if] [in] [, COVARS(varlist fv) SUBGroups(varlist) REView(varlist) BALanceby(varlist) SKIPBALance /* CONtrol(integer) */ MODel(string) CLuster(varlist)]
+syntax varlist(min=2 max=2 numeric) [if] [in] [, COVARS(varlist fv) SUBGroups(varlist) BINS(varlist) REView(varlist) BALanceby(varlist) SKIPBALance /* CONtrol(integer) */ MODel(string) CLuster(varlist)]
 
 * Exclude observations that do not meet the IF or IN criteria (if specified).
 qui: marksample touse
