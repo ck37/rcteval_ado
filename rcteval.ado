@@ -36,6 +36,9 @@ timer on 83
 qui su `assignment' if `touse'
 * Set the control value to be the lowest value of the assignment term.
 local control = r(min)
+qui tab `assignment' if `touse'
+* Save the number of assignment levels for later usage.
+local assignment_levels = r(r)
 
 dis "Review assignment breakdown within the test universe."
 foreach var in `review' {
@@ -119,6 +122,7 @@ foreach var in `subgroups_clean' {
 	qui tab `var' if `touse'
 	* Save the number of levels for future usage.
 	local group_levels = r(r)
+	* Note: this section isn't needed anymore because we have already skipped these variables.
 	if r(r) < 2 {
 		dis "Skipping subgroup `var' because it does not have 2 or more levels."
 		continue
@@ -135,15 +139,26 @@ foreach var in `subgroups_clean' {
 	dis _n(3) "Interaction test for `var', with covariates -- "
     logit `dv' `var'##ib`control'.`assignment' `covars' if `touse', nolog or cluster(`cluster')
     
-    * TODO: Only run contrast command if variable has more than two levels.
-    * Otherwise, just look at the p-value in the regression.
+    * If the subgroup has only two levels we can check the p-value directly from the regression.
     
-    * estimates store model_interact
-    * We allow the distribution of interaction term values to be left as observed in the dataset rather than assumed to be equal (as balanced).
-	contrast `var'##i.`assignment', asobserved
-	matrix p_values = r(p)
-	* Interaction term will be the third column in the first row.
-	local interact_test = p_values[1, 3]
+    if `group_levels' == 2 {
+
+ 	   * Determine the p-value column to check for the interaction effect.
+	    local check_col = `assignment_levels' + `group_levels' + `assignment_levels' * `group_levels'
+	    matrix results = r(table)
+	    matrix p_values = results["pvalue", 1...]
+	    local interact_test = p_values[1, `check_col']
+	}
+	else {
+		* Subgroup has more than two levels so run a joint test of interaction.
+    
+   		* estimates store model_interact
+	    * We allow the distribution of interaction term values to be left as observed in the dataset rather than assumed to be equal (as balanced).
+		contrast `var'##i.`assignment', asobserved
+		matrix p_values = r(p)
+		* Interaction term will be the third column in the first row.
+		local interact_test = p_values[1, 3]
+	}
 	
 	* Run a reduced form model for comparison. Make sure that the interaction term is defined for all records.
 	* logit `dv' ib`control'.`assignment' `covars' if `touse' & `var' != ., nolog or cluster(`cluster')
