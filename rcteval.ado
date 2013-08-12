@@ -140,14 +140,30 @@ foreach var in `subgroups_clean' {
     logit `dv' `var'##ib`control'.`assignment' `covars' if `touse', nolog or cluster(`cluster')
     
     * If the subgroup has only two levels we can check the p-value directly from the regression.
-    
     if `group_levels' == 2 {
-
- 	   * Determine the p-value column to check for the interaction effect.
-	    local check_col = `assignment_levels' + `group_levels' + `assignment_levels' * `group_levels'
+    	
+ 	    * Determine the p-value column to check for the interaction effect.
+ 	    * Generally this is the third p-value in the regression, for a binary assignment variable and binary interaction term.
+	    * OLD -- local check_col = `assignment_levels' + `group_levels' + `assignment_levels' * `group_levels'
+	    * Leaving the final 1 in here to make the calculation clearer.
+	    local p_num = (`assignment_levels' - 1) + (`group_levels' - 1) + 1
 	    matrix results = r(table)
 	    matrix p_values = results["pvalue", 1...]
-	    local interact_test = p_values[1, `check_col']
+	    local num_columns = colsof(p_values)
+	    local target_col = 0
+	    * Loop through p-values and find the correct non-missing value.
+	    forvalues i = 1/`num_columns' {
+	   		if p_values[1, `i'] != . {
+	   			* This is a valid p-value, so decrement our counter until we eventually hit zero.
+				local --p_num
+	    	}
+	    	if `p_num' == 0 {
+	    		* We are at the right p-value so save it.
+	    		local interact_test = p_values[1, `i']
+	    		* Stop looping.
+	    		continue, break
+	    	}
+	    }
 	}
 	else {
 		* Subgroup has more than two levels so run a joint test of interaction.
