@@ -138,6 +138,7 @@ foreach var in `subgroups_clean' {
 	
 	dis _n(3) "Interaction test for `var', with covariates -- "
     logit `dv' `var'##ib`control'.`assignment' `covars' if `touse', nolog or cluster(`cluster')
+    matrix results = r(table)
     
     * If the subgroup has only two levels we can check the p-value directly from the regression.
     if `group_levels' == 2 {
@@ -147,7 +148,6 @@ foreach var in `subgroups_clean' {
 	    * OLD -- local check_col = `assignment_levels' + `group_levels' + `assignment_levels' * `group_levels'
 	    * Leaving the final 1 in here to make the calculation clearer.
 	    local p_num = (`assignment_levels' - 1) + (`group_levels' - 1) + 1
-	    matrix results = r(table)
 	    matrix p_values = results["pvalue", 1...]
 	    local num_columns = colsof(p_values)
 	    local target_col = 0
@@ -166,11 +166,16 @@ foreach var in `subgroups_clean' {
 	    }
 	}
 	else {
-		* Subgroup has more than two levels so run a joint test of interaction.
+		* Subgroup has more than two levels, so first do a pairwise comparison of the coefficients.
+		pwcompare `var'#ib`control'.`assignment', asobs effects
+		
+		* <Insert loop that checks for significant comparsions.>
+		
+		* Now run a joint test of interaction.
     
    		* estimates store model_interact
 	    * We allow the distribution of interaction term values to be left as observed in the dataset rather than assumed to be equal (as balanced).
-		contrast `var'##i.`assignment', asobserved
+		contrast `var'##ib`control'.`assignment', asobserved
 		matrix p_values = r(p)
 		* Interaction term will be the third column in the first row.
 		local interact_test = p_values[1, 3]
