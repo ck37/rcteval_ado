@@ -4,7 +4,7 @@ version 12.0
 
 /*
 * Example syntax: 
-rcteval `dv' `assignment', covars(`covars') subgroups(`subgroups') continuous(`continuous subgroups') review(`assignment_review') balanceby(`balance_var')
+rcteval `dv' `assignment', covars(`covars') subgroups(`subgroups') continuous(`continuous subgroups') cluster(cluster_id) review(`assignment_review') balanceby(`balance_var')
 
 tiles: ordinal categorical variables that should be converted to tiles, then have a specific HTE algorithm used.
   - Try a 5-tile first at joint p < 0.1 or any individual p < 0.1, then if any is significant run 3-tile and 7-tile for comparison.
@@ -20,6 +20,7 @@ TODO:
 - Show table of covariate means across assignments.
 - Option or one-tailed or two-tailed p-values.
 - control() -> specify the assignment variable that is the control arm. presumed to be the lowest value if not specified.
+- auto(n) -> add automatic detection of continuous covariates if a variable exceeds a set number of levels, e.g. 32, or cardinality within the analyzed subset (e.g. > 5% of values are unique).
 
 */
 
@@ -212,30 +213,40 @@ foreach var in `subgroups_clean' {
 		* Interaction term will be the third column in the first row.
 		local interact_test = p_values[1, 3]
 	}
+	* Define this variable outside of the IF clause because we need to test it in the next clause.
+	local best_p = 1
+	
+	* Cut-off value for determining that a subgroup has a significant HTE.
+	local subgroup_significance = 0.1
 	
 	* Run additional analysis for continuous subgroups.
 	if `is_cont' == 1 {
+		dis "Running continuous 5-tile analysis."
+		
+		* <Insert code to look at treatment heterogeneity based on dividing the continuous variable into 5 tiles.>
+	
 		dis "Running mfpi analysis."
 		* Run mfpi -- skipping fp2(`var') for now, it takes too long to run.
-		mfpi, with(`assignment') linear(`var') fp1(`var') showmodel adjust(`covars') gendiff(_mfpi_): logit `dv' if `touse', nolog cluster(`cluster')
+		mfpi, with(`assignment') linear(`var') fp1(`var') showmodel adjust(`covars') gendiff(_mfpi_): logit `dv' if `touse', nolog or cluster(`cluster')
 
 		* Loop through the results, assuming the linear model is the best fit.
 		local model_type = "fp1 fp2"
 		* Skip fp2 for now, it takes too long to run.
 		local model_type = "fp1"
 		
+		* By default we will select the linear model.
 		local best_model = 1
 		local best_aic = r(aiclin)
 		local best_p = r(Plin)
 		local current_model = 1
 		
+		* Iterate through remaining non-linear models to see if they should be preferred.
 		foreach type in `model_type' {
 			* Increment our model counter.
 			local ++current_model
-			* Determine the model with the lowest AIC.
-			* Also determine if the model is significant or not.
 			local aic = r(aic`type')
 			local p = r(P`type')
+			* Here we choose the best model based on the lowest AIC. Alternatively we could choose based on the lowest p-value or deviance.
 			if `aic' < `best_aic' {
 				local best_aic = `aic'
 				local best_p = `p'
@@ -243,11 +254,13 @@ foreach var in `subgroups_clean' {
 			}
 		}
 		dis "Best model: `best_model'. Best p: `best_p'. Best AIC: `best_aic'."
-		* Run mfpi_plot on that model and save the result.
-		local graph_name = "`expname'_subgroup_`var'_`best_model'"
-		mfpi_plot `var' if `touse', vn(`best_model') saving("`graph_name'", replace) name(mfpi_curplot)
-		graph export "`graph_name'.png", replace
-		graph drop mfpi_curplot
+		* Plot the result if it is a significance interaction effect.
+		if `best_p' <= `subgroup_significance' {
+			local graph_name = "`expname'_subgroup_`var'_`best_model'"
+			mfpi_plot `var' if `touse', vn(`best_model') saving("`graph_name'", replace) name(mfpi_curplot)
+			graph export "`graph_name'.png", replace
+			graph drop mfpi_curplot
+		}
 	}
 	
 	* Run a reduced form model for comparison. Make sure that the interaction term is defined for all records.
@@ -260,14 +273,13 @@ foreach var in `subgroups_clean' {
 	* TODO: p-value cut-off should be a parameter and/or we should control for multiple comparisons.
 	* TODO: ideally we would also check if the subgroup effect is clinically significant (at least 25% different than main effect).
 		* (See http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2813449/ )
-	local subgroup_significance = 0.1
 	if (`interact_test' < `subgroup_significance') | (`is_cont' == 1 & `best_p' < `subgroup_significance') {
 		dis "** Found significant interaction effect for `var' (p = " as result %06.4f round(`interact_test', .0001) as text ")."
 		if `is_cont' == 1 {
 			* For continuous variables analyze the results by the tiles, not the individual values.
 			local subgroup_var = "etile_`var'"
 			* Show distribution of the tiles.
-			bysort etile_`var': su `var' if `touse', detail
+			bysort etile_`var': su `var' if `touse'
 		}
 		else {
 			local subgroup_var = "`var'"
