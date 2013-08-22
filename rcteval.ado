@@ -132,11 +132,20 @@ foreach var in `subgroups_clean' {
 	qui tab `var' if `touse'
 	* Save the number of levels for future usage.
 	local group_levels = r(r)
+	* Save the sample size for future usage.
+	local var_size = r(N)
 	* Note: this section isn't needed anymore because we have already skipped these variables.
 	if r(r) < 2 {
 		dis "Skipping subgroup `var' because it does not have 2 or more levels."
 		continue
 	}
+	
+	* Create a separate local variable for the sample used in subgroup analysis, so that we can also exclude missing values of that subgroup variable.
+	* Restrict our sample based on the IF clause of the original command.
+	marksample subuse
+	* Additionally exclude any records that are missing the subgroup variable.
+	markout `subuse' `var'
+		
 	
 	* Check if this is a continuous subgroup.
 	local is_cont: list var in continuous
@@ -150,7 +159,10 @@ foreach var in `subgroups_clean' {
 		* Create specific tiles for this experiment. Alternatively we could do this earlier for each continuous variable.
 		* Drop our target variable name if it exists.
 		cap drop etile_`var'
-		xtile etile_`var' = `var' if `touse', n(5) 
+		xtile etile_`var' = `var' if `subuse', n(5)
+		tab etile_`var' `dv' if `subuse', row chi2
+		* Save the number of tile levels for later usage. It can be less that the specified number due to records sharing the same value on the tile border.
+		local etile_levels = r(r)
 	}
 
 	/** Skip this part to keep the log concise.
@@ -162,7 +174,7 @@ foreach var in `subgroups_clean' {
 	*/
 	
 	dis _n(3) "Interaction test for `var', with covariates -- "
-    logit `dv' `cont_prefix'`var'##ib`control'.`assignment' `covars' if `touse', nolog or cluster(`cluster')
+    logit `dv' `cont_prefix'`var'##ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
     matrix results = r(table)
     
     * If the subgroup has only two levels or is continuous we can check the p-value directly from the regression.
@@ -216,6 +228,9 @@ foreach var in `subgroups_clean' {
 	* Define this variable outside of the IF clause because we need to test it in the next clause.
 	local best_p = 1
 	
+	* For continuous variables we want to see if any cross-tile comparison has a p-value below the significance threshold.
+	local tile_p = 1
+	
 	* Cut-off value for determining that a subgroup has a significant HTE.
 	local subgroup_significance = 0.1
 	
@@ -223,14 +238,20 @@ foreach var in `subgroups_clean' {
 	if `is_cont' == 1 {
 		dis "Running continuous 5-tile analysis."
 		
-		* <Insert code to look at treatment heterogeneity based on dividing the continuous variable into 5 tiles.>
+   		logit `dv' i.etile_`var'##ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
+	    matrix results = r(table)
+	    matrix p_values = results["pvalue", 1...]
+	    matrix list p_values
+		* Result should be setting the lowest observed p-value to the tile_p local variable.
+		
+
 	
 		dis "Running mfpi analysis."
 		* Run mfpi -- skipping fp2(`var') for now, it takes too long to run.
-		mfpi, with(`assignment') linear(`var') fp1(`var') showmodel adjust(`covars') gendiff(_mfpi_): logit `dv' if `touse', nolog or cluster(`cluster')
+		mfpi, with(`assignment') linear(`var') fp1(`var') showmodel adjust(`covars') gendiff(_mfpi_): logit `dv' if `subuse', nolog or cluster(`cluster')
 
 		* Loop through the results, assuming the linear model is the best fit.
-		local model_type = "fp1 fp2"
+		* local model_type = "fp1 fp2"
 		* Skip fp2 for now, it takes too long to run.
 		local model_type = "fp1"
 		
@@ -257,9 +278,13 @@ foreach var in `subgroups_clean' {
 		* Plot the result if it is a significance interaction effect.
 		if `best_p' <= `subgroup_significance' {
 			local graph_name = "`expname'_subgroup_`var'_`best_model'"
-			mfpi_plot `var' if `touse', vn(`best_model') saving("`graph_name'", replace) name(mfpi_curplot)
+			* // plot(histogram `var' if `subuse')
+			mfpi_plot `var' if `subuse', vn(`best_model') saving("`graph_name'", replace) name(mfpi_curplot, replace)
+			hist `var' if `subuse', name(hist_var, replace) fysize(23) xlabel(, nogrid) xtitle("") ylabel(#2, nogrid) ytitle("Sample") xtitle("Total n = `var_size'")
+			* ylabel(none, nogrid)  ytitle("") ytick(none)
+			graph combine mfpi_curplot hist_var, cols(1) xcommon name(graph_combined, replace) iscale(1) imargin(2 2 2 2)
 			graph export "`graph_name'.png", replace
-			graph drop mfpi_curplot
+			graph drop mfpi_curplot hist_var graph_combined
 		}
 	}
 	
@@ -273,7 +298,10 @@ foreach var in `subgroups_clean' {
 	* TODO: p-value cut-off should be a parameter and/or we should control for multiple comparisons.
 	* TODO: ideally we would also check if the subgroup effect is clinically significant (at least 25% different than main effect).
 		* (See http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2813449/ )
-	if (`interact_test' < `subgroup_significance') | (`is_cont' == 1 & `best_p' < `subgroup_significance') {
+		
+
+	* <Explain logic here.>
+	if (`interact_test' < `subgroup_significance') | (`is_cont' == 1 & (`best_p' < `subgroup_significance' | `tile_p' < `subgroup_significance')) {
 		dis "** Found significant interaction effect for `var' (p = " as result %06.4f round(`interact_test', .0001) as text ")."
 		if `is_cont' == 1 {
 			* For continuous variables analyze the results by the tiles, not the individual values.
