@@ -128,6 +128,7 @@ if `n_skip' > 0 {
 
 
 foreach var in `subgroups_clean' {
+	dis "Examine heterogeneity in `var'."
 	* Confirm that there are at least two levels of this subgroup.
 	qui tab `var' if `touse'
 	* Save the number of levels for future usage.
@@ -174,7 +175,8 @@ foreach var in `subgroups_clean' {
 	*/
 	
 	dis _n(3) "Interaction test for `var', with covariates -- "
-    logit `dv' `cont_prefix'`var'##ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
+	* Rather than use ##, we manually specify the three terms so that the interaction p-values are at the very beginning, which is faster to access programmatically.
+    logit `dv' `cont_prefix'`var'#ib`control'.`assignment' `cont_prefix'`var' ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
     matrix results = r(table)
     
     * If the subgroup has only two levels or is continuous we can check the p-value directly from the regression.
@@ -184,15 +186,22 @@ foreach var in `subgroups_clean' {
  	    * Generally this is the third p-value in the regression, for a binary assignment variable and binary interaction term.
 	    * OLD -- local check_col = `assignment_levels' + `group_levels' + `assignment_levels' * `group_levels'
 	    * Leaving the final 1 in here to make the calculation clearer.
-	
+	    
+		/* 
+		* NOTE: This version was using the more concise ## specification method.
 	    if `is_cont' == 1 {
 	    	local p_num = (`assignment_levels' - 1) + 2
 	    }
 	    else {
 		    local p_num = (`assignment_levels' - 1) + (`group_levels' - 1) + 1
 		}
+		*/
+		* We should only need the first non-blank p-value due to the manual interaction specification (i.e. using # rather than ##).
+		local p_num = 1
 	
 	    matrix p_values = results["pvalue", 1...]
+	    * matrix list p_values
+	    
 	    local num_columns = colsof(p_values)
 	    local target_col = 0
 	    * Loop through p-values and find the correct non-missing value.
@@ -208,13 +217,16 @@ foreach var in `subgroups_clean' {
 	    		continue, break
 	    	}
 	    }
-	    dis "Preliminary interaction test p-value: " as result %06.4f round(`interact_test', .0001) as text "."
+	    
+	    * The correct p-value should be at the 2nd location for a 2-level assignment, 3rd location for a 3-level assignment, etc.
+	    *local interact_test = p_values[1, `assignment_levels']
+	    dis "Linear interaction test p-value: " as result %06.4f round(`interact_test', .0001) as text "."
 	}
 	else {
 		* Subgroup has more than two levels, so first do a pairwise comparison of the coefficients.
 		* pwcompare `var'#ib`control'.`assignment', asobs effects
 		
-		* <Insert loop that checks for significant comparsions.>
+		* <Insert loop that checks for significant comparisons.>
 		
 		* Now run a joint test of interaction.
     
@@ -237,15 +249,53 @@ foreach var in `subgroups_clean' {
 	* Run additional analysis for continuous subgroups.
 	if `is_cont' == 1 {
 		dis "Running continuous 5-tile analysis."
-		
-   		logit `dv' i.etile_`var'##ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
+		* Rather than use ##, we manually specify the three terms so that the interaction p-values are at the very beginning, which is faster to access programmatically.
+   		logit `dv' i.etile_`var'#ib`control'.`assignment' i.etile_`var' ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
 	    matrix results = r(table)
 	    matrix p_values = results["pvalue", 1...]
-	    matrix list p_values
+	    * matrix list p_values
+	    local num_columns = colsof(p_values)
 		* Result should be setting the lowest observed p-value to the tile_p local variable.
 		
+		* Loop through current p-values and report any significant values.
+		* The first X - 1 p-values are the ones we want to check, where X is the number of tiles. Possibly multiplied by assignment levels - 1?
 
-	
+	    local target_col = 0
+	    local p_valid = 0
+	    local found_effect = 0
+	    local tile_p = 1
+	    local total_values = `etile_levels' - 1
+	    dis "Checking the first `total_values' p-values."
+	    * Loop through p-values and find the correct non-missing value.
+	    forvalues i = 1/`num_columns' {
+	    	local p = p_values[1, `i']
+	   		if `p' != . {
+	   			* This is a valid p-value, so increment our count.
+				local ++p_valid
+				* Check if it is significant or not.
+				if `p' <= `subgroup_significance' {
+					* Found a significant interaction effect.
+					local ++found_effect
+					dis "Found significant interaction effect #`found_effect': "as result %06.4f round(`p', .0001) as text " (value `p_valid')."
+				}
+				* Set to our minimum p-value for the tile analysis if it's lower than our current lowest result.
+				local tile_p = min(`tile_p', `p')
+	    	}
+	    
+	    	* Check if we have looked at all of the p-values we want to.
+	    	if `p_valid' == `total_values' {
+	   	    	* Stop looping.
+	    		continue, break
+	    	}
+	    }
+		
+		* Loop through interaction coeffients and run pairwise tests on each other, capturing any significant values. Perhaps the pwcompare command can do this most efficiently.
+		
+		* TODO: Also generate charts of the tiled analysis.
+
+		***** TEMPORARILY DISABLE MFPI to allow faster debugging of the tile analysis. ********
+		
+		* TODO: check if the analyst has mfpi installed, and skip if they do not.
 		dis "Running mfpi analysis."
 		* Run mfpi -- skipping fp2(`var') for now, it takes too long to run.
 		mfpi, with(`assignment') linear(`var') fp1(`var') showmodel adjust(`covars') gendiff(_mfpi_): logit `dv' if `subuse', nolog or cluster(`cluster')
@@ -286,8 +336,10 @@ foreach var in `subgroups_clean' {
 			graph export "`graph_name'.png", replace
 			graph drop mfpi_curplot hist_var graph_combined
 		}
+		*
 	}
 	
+	* Ignore these notes - just haven't deleted them yet.
 	* Run a reduced form model for comparison. Make sure that the interaction term is defined for all records.
 	* logit `dv' ib`control'.`assignment' `covars' if `touse' & `var' != ., nolog or cluster(`cluster')
 	* Also compute a LR test to compare the model with interacting treatment to one without.
@@ -299,10 +351,14 @@ foreach var in `subgroups_clean' {
 	* TODO: ideally we would also check if the subgroup effect is clinically significant (at least 25% different than main effect).
 		* (See http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2813449/ )
 		
+	* Determine the lowest p-value from the regression test, the mfpi analysis (if run), and the tile analysis (if run).
+	local lowest_p = min(`interact_test', `best_p', `tile_p')
+	
+	* TODO: print pretty summary table of the p-values by type of analysis.
 
-	* <Explain logic here.>
-	if (`interact_test' < `subgroup_significance') | (`is_cont' == 1 & (`best_p' < `subgroup_significance' | `tile_p' < `subgroup_significance')) {
-		dis "** Found significant interaction effect for `var' (p = " as result %06.4f round(`interact_test', .0001) as text ")."
+	if (`lowest_p' <= `subgroup_significance') {
+		* Old version:	if (`interact_test' < `subgroup_significance') | (`is_cont' == 1 & (`best_p' < `subgroup_significance' | `tile_p' < `subgroup_significance')) {
+		dis "** Found significant interaction effect for `var' (p = " as result %06.4f round(`lowest_p', .0001) as text ")."
 		if `is_cont' == 1 {
 			* For continuous variables analyze the results by the tiles, not the individual values.
 			local subgroup_var = "etile_`var'"
@@ -320,9 +376,42 @@ foreach var in `subgroups_clean' {
 		*/
 		dis "By `subgroup_var' with covariates (`covars') --"
 		bysort `subgroup_var': reg `dv' ib`control'.`assignment' `covars' if `touse', cluster(`cluster')
+		
+		if `is_cont' == 1 {
+			local additional_tiles = "3 7"
+			dis "Analyzing `subgroup_var' with additional tiling: `additional_tiles'."
+			foreach i in `additional_tiles' {
+				dis "Analyze using `i'-tile."
+				* Create the tiles.
+				local tile = "etile`i'_`var'"
+				* Drop the tile variable if it already exists in the dataset.
+				cap drop `tile'
+				xtile `tile' = `var' if `subuse', n(`i')
+				* Look at the distribution of the dependent variable on the tiles.
+				tab `tile' `dv' if `subuse', row chi2
+				* Show the cut-points of the tiles.
+				bysort `tile': su `var' if `touse'
+				* Save the number of tile levels for later usage. It can be less that the specified number due to records sharing the same value on the tile border.
+				local etile_levels = r(r)
+				
+				* Do the same analysis we did on the original tiles - regression, examine tile interaction p-values, and do pair-wise comparison of tile coefficients.
+				* We may want to recommend which tiling scheme is most accurate, e.g. based on # of significant p-values, r-squared, AIC, f-score, or chi-squared.
+				
+				* Rather than use ##, we manually specify the three terms so that the interaction p-values are at the very beginning, which is faster to access programmatically.
+		   		logit `dv' i.`tile'#ib`control'.`assignment' i.`tile' ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
+		   		
+		   		* TODO: Finish implementing if CM agrees this is the correct approach.
+		   		* TODO: Specific steps: examine tile interaction p-values, and do pair-wise comparison of tile coefficients.
+		   		
+		   		* TODO: see if we can refactor this section to share a common function with the original tile analysis.
+		   		
+		   		* Delete the tile if it isn't wanted any more.
+				cap drop `tile'
+			}
+		}
 	}
 	else {
-		dis "** Did not find significant interaction effect for `var' (p = " as result %06.4f round(`interact_test', .0001) as text ")."
+		dis "** Did not find significant interaction effect for `var' (p = " as result %06.4f round(`lowest_p', .0001) as text ")."
 	}
 	dis _n
 }
