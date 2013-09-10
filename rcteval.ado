@@ -96,17 +96,9 @@ local subgroups_clean ""
 local subgroups_skip ""
 foreach var in `subgroups' {
 	* Confirm that there are at least two levels of this subgroup.
-	qui tab `var' if `touse'
-	if r(r) < 2 {
-		* Skip this subgroup.
-		local blank " "
-		* Don't add a space if this is the first skipped subgroup.
-		if "`subgroups_skip'" == "" {
-			local blank = ""
-		}
-		local subgroups_skip "`subgroups_skip'`blank'`var'"	
-	}
-	else {
+	* Capture the value because if there are too many values (e.g. for a continuous variable) tabulate will return an error (#134).
+	cap tab `var' if `touse'
+	if _rc == 134 | r(r) >= 2 {
 		* Keep this subgroup.
 		local blank " "
 		* Don't add a space if this is the first clean subgroup.
@@ -115,6 +107,16 @@ foreach var in `subgroups' {
 		}
 		local subgroups_clean "`subgroups_clean'`blank'`var'"
 	}
+	else {
+		* Skip this subgroup.
+		local blank " "
+		* Don't add a space if this is the first skipped subgroup.
+		if "`subgroups_skip'" == "" {
+			local blank = ""
+		}
+		local subgroups_skip "`subgroups_skip'`blank'`var'"	
+	}
+
 }
 
 dis _n(3) "e. Subgroup analysis (`subgroups_clean')"
@@ -130,7 +132,8 @@ if `n_skip' > 0 {
 foreach var in `subgroups_clean' {
 	dis "Examine heterogeneity in `var'."
 	* Confirm that there are at least two levels of this subgroup.
-	qui tab `var' if `touse'
+	* TOFIX: error-prone for contiuous variables with tons of levels -- many want to use "groups" module in SSC.
+	cap tab `var' if `touse'
 	* Save the number of levels for future usage.
 	local group_levels = r(r)
 	* Save the sample size for future usage.
@@ -175,7 +178,7 @@ foreach var in `subgroups_clean' {
 	*/
 	
 	dis _n(3) "Interaction test for `var', with covariates -- "
-	* Rather than use ##, we manually specify the three terms so that the interaction p-values are at the very beginning, which is faster to access programmatically.
+	* Rather than use ##, we manually specify the three terms so that the interaction p-values are at the very beginning, which is marginally faster to access programmatically.
     logit `dv' `cont_prefix'`var'#ib`control'.`assignment' `cont_prefix'`var' ib`control'.`assignment' `covars' if `subuse', nolog or cluster(`cluster')
     matrix results = r(table)
     
@@ -267,7 +270,7 @@ foreach var in `subgroups_clean' {
 	    local total_values = `etile_levels' - 1
 	    dis "Checking the first `total_values' p-values."
 	    * Loop through p-values and find the correct non-missing value.
-	    forvalues i = 1/`num_columns' {
+	    forvalues i = 1 / `num_columns' {
 	    	local p = p_values[1, `i']
 	   		if `p' != . {
 	   			* This is a valid p-value, so increment our count.
@@ -335,6 +338,10 @@ foreach var in `subgroups_clean' {
 			graph combine mfpi_curplot hist_var, cols(1) xcommon name(graph_combined, replace) iscale(1) imargin(2 2 2 2)
 			graph export "`graph_name'.png", replace
 			graph drop mfpi_curplot hist_var graph_combined
+			dis "Saved graph."
+		}
+		else {
+			dis "No mfpi interaction found, skipping graph."
 		}
 		*
 	}
